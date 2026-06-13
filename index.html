@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grandma Flappy Bird</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f9e4c8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: Georgia, serif;
+      overflow: hidden;
+    }
+    h1 {
+      color: #a0522d;
+      font-size: 1.4rem;
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+    }
+    canvas {
+      border: 3px solid #c4a882;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+      display: block;
+    }
+    #hint {
+      margin-top: 10px;
+      color: #8b6045;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>🌸 Grandma Takes Flight 🌸</h1>
+  <canvas id="gameCanvas" width="400" height="550"></canvas>
+  <p id="hint">Press <strong>Space</strong> or tap to flap!</p>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- Load grandma image (falls back to placeholder if not found) ---
+    const grandmaImg = new Image();
+    let useImage = false;
+    grandmaImg.onload = () => { useImage = true; };
+    grandmaImg.onerror = () => { useImage = false; };
+    grandmaImg.src = 'grandma.png';
+
+    // --- Color palette ---
+    const SKY      = '#fef3e2';
+    const GROUND   = '#d4a574';
+    const GROUND2  = '#c49060';
+    const PIPE_BODY = '#7daa6f';
+    const PIPE_RIM  = '#5a8a50';
+    const FLOWER_C  = '#e8a0b4';
+    const CLOUD_C   = '#ffffff';
+
+    // --- Game constants ---
+    const W = canvas.width;
+    const H = canvas.height;
+    const GROUND_H = 60;
+    const GRAVITY = 0.38;
+    const FLAP_STRENGTH = -7.5;
+    const PIPE_W = 60;
+    const PIPE_GAP = 145;
+    const PIPE_SPEED = 2.4;
+    const PIPE_INTERVAL = 1700; // ms
+
+    // --- State ---
+    let bird, pipes, clouds, score, highScore, state, lastPipeTime, animFrame;
+
+    function resetGame() {
+      bird = {
+        x: 90,
+        y: H / 2 - 20,
+        vy: 0,
+        w: 52,
+        h: 52,
+        rotation: 0,
+      };
+      pipes = [];
+      score = 0;
+      lastPipeTime = 0;
+      state = 'idle'; // idle | playing | dead
+    }
+
+    function initClouds() {
+      clouds = [];
+      for (let i = 0; i < 5; i++) {
+        clouds.push({
+          x: Math.random() * W,
+          y: 40 + Math.random() * 140,
+          r: 22 + Math.random() * 28,
+          speed: 0.25 + Math.random() * 0.3,
+        });
+      }
+    }
+
+    // --- Drawing helpers ---
+    function drawSky() {
+      const grad = ctx.createLinearGradient(0, 0, 0, H - GROUND_H);
+      grad.addColorStop(0, '#fce4d6');
+      grad.addColorStop(1, '#fef9f0');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H - GROUND_H);
+    }
+
+    function drawCloud(c) {
+      ctx.fillStyle = CLOUD_C;
+      ctx.globalAlpha = 0.82;
+      const draw = (dx, dy, r) => {
+        ctx.beginPath();
+        ctx.arc(c.x + dx, c.y + dy, r, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      draw(0, 0, c.r);
+      draw(c.r * 0.7, c.r * 0.1, c.r * 0.75);
+      draw(-c.r * 0.65, c.r * 0.15, c.r * 0.65);
+      draw(c.r * 0.1, -c.r * 0.45, c.r * 0.55);
+      ctx.globalAlpha = 1;
+    }
+
+    function drawGround() {
+      ctx.fillStyle = GROUND;
+      ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+      ctx.fillStyle = GROUND2;
+      ctx.fillRect(0, H - GROUND_H, W, 6);
+      // grass tufts
+      ctx.fillStyle = '#9bc77a';
+      for (let x = 0; x < W; x += 18) {
+        ctx.beginPath();
+        ctx.moveTo(x, H - GROUND_H);
+        ctx.lineTo(x + 6, H - GROUND_H - 8);
+        ctx.lineTo(x + 12, H - GROUND_H);
+        ctx.fill();
+      }
+    }
+
+    function drawFlower(cx, cy) {
+      const petalR = 7;
+      const petalColors = ['#f4a7c0', '#f9c8da', '#e8a0b4', '#f7b3c8'];
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2;
+        ctx.fillStyle = petalColors[i % petalColors.length];
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(angle) * petalR, cy + Math.sin(angle) * petalR, petalR - 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#f7e26b';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawPipe(pipe) {
+      const topH = pipe.topY;
+      const botY = pipe.topY + PIPE_GAP;
+      const botH = H - GROUND_H - botY;
+
+      const drawRect = (x, y, w, h) => {
+        // body
+        const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+        grad.addColorStop(0, '#5a8a50');
+        grad.addColorStop(0.3, PIPE_BODY);
+        grad.addColorStop(1, '#4a7542');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, y, w, h);
+
+        // rim cap
+        ctx.fillStyle = PIPE_RIM;
+        const rimH = 14, rimW = w + 10;
+        const rimX = x - 5;
+        if (y === 0) {
+          // top pipe — rim at bottom
+          ctx.fillRect(rimX, y + h - rimH, rimW, rimH);
+          ctx.strokeStyle = '#3d6b35';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(rimX, y + h - rimH, rimW, rimH);
+          drawFlower(x + w / 2, y + h - rimH - 8);
+        } else {
+          // bottom pipe — rim at top
+          ctx.fillRect(rimX, y, rimW, rimH);
+          ctx.strokeStyle = '#3d6b35';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(rimX, y, rimW, rimH);
+          drawFlower(x + w / 2, y + rimH + 8);
+        }
+      };
+
+      drawRect(pipe.x, 0, PIPE_W, topH);
+      drawRect(pipe.x, botY, PIPE_W, botH);
+    }
+
+    function drawPlaceholderBird(b) {
+      const cx = b.x, cy = b.y;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(b.rotation);
+
+      // body
+      ctx.fillStyle = '#f9d0b4';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 22, 20, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#c4956a';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // hair bun
+      ctx.fillStyle = '#888';
+      ctx.beginPath();
+      ctx.arc(0, -18, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#aaa';
+      ctx.beginPath();
+      ctx.arc(-5, -22, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // eyes
+      ctx.fillStyle = '#333';
+      ctx.beginPath(); ctx.arc(-7, -4, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7, -4, 3, 0, Math.PI * 2); ctx.fill();
+
+      // rosy cheeks
+      ctx.fillStyle = 'rgba(240,150,150,0.5)';
+      ctx.beginPath(); ctx.ellipse(-12, 3, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(12, 3, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+
+      // smile
+      ctx.strokeStyle = '#c4956a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 4, 8, 0.1, Math.PI - 0.1);
+      ctx.stroke();
+
+      // glasses
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(-7, -4, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(7, -4, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-2, -4); ctx.lineTo(2, -4); ctx.stroke();
+
+      // wings (little arms)
+      ctx.fillStyle = '#f9d0b4';
+      ctx.beginPath();
+      ctx.ellipse(-26, 4, 10, 6, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#c4956a';
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawBird() {
+      const b = bird;
+      if (useImage) {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.rotation);
+        ctx.drawImage(grandmaImg, -b.w / 2, -b.h / 2, b.w, b.h);
+        ctx.restore();
+      } else {
+        drawPlaceholderBird(b);
+      }
+    }
+
+    function drawScore() {
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.beginPath();
+      ctx.roundRect(W / 2 - 45, 12, 90, 38, 10);
+      ctx.fill();
+      ctx.fillStyle = '#7a4f2e';
+      ctx.font = 'bold 26px Georgia';
+      ctx.textAlign = 'center';
+      ctx.fillText(score, W / 2, 40);
+    }
+
+    function drawIdleScreen() {
+      ctx.fillStyle = 'rgba(255,245,235,0.88)';
+      ctx.beginPath();
+      ctx.roundRect(W / 2 - 140, H / 2 - 80, 280, 160, 16);
+      ctx.fill();
+      ctx.strokeStyle = '#c4a882';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#a0522d';
+      ctx.font = 'bold 22px Georgia';
+      ctx.textAlign = 'center';
+      ctx.fillText('🌸 Grandma Takes Flight', W / 2, H / 2 - 40);
+
+      ctx.fillStyle = '#7a4f2e';
+      ctx.font = '16px Georgia';
+      ctx.fillText('Press Space or tap to start', W / 2, H / 2);
+      ctx.fillText('Keep Grandma in the air!', W / 2, H / 2 + 28);
+
+      if (highScore) {
+        ctx.fillStyle = '#c47a3d';
+        ctx.font = '14px Georgia';
+        ctx.fillText(`Best: ${highScore}`, W / 2, H / 2 + 56);
+      }
+    }
+
+    function drawDeadScreen() {
+      ctx.fillStyle = 'rgba(255,245,235,0.92)';
+      ctx.beginPath();
+      ctx.roundRect(W / 2 - 140, H / 2 - 100, 280, 200, 16);
+      ctx.fill();
+      ctx.strokeStyle = '#c4a882';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#a0522d';
+      ctx.font = 'bold 24px Georgia';
+      ctx.textAlign = 'center';
+      ctx.fillText('Oh dear! 😅', W / 2, H / 2 - 58);
+
+      ctx.fillStyle = '#7a4f2e';
+      ctx.font = '18px Georgia';
+      ctx.fillText(`Score: ${score}`, W / 2, H / 2 - 22);
+
+      if (highScore) {
+        ctx.fillStyle = score >= highScore ? '#d4870a' : '#8b6045';
+        ctx.font = '15px Georgia';
+        ctx.fillText(score >= highScore ? `New Best: ${highScore}! 🎉` : `Best: ${highScore}`, W / 2, H / 2 + 10);
+      }
+
+      ctx.fillStyle = '#a0522d';
+      ctx.font = '15px Georgia';
+      ctx.fillText('Press Space or tap to try again', W / 2, H / 2 + 48);
+
+      // sassy grandma quote
+      const quotes = [
+        '"Back in my day, birds walked."',
+        '"I need my reading glasses."',
+        '"These hips weren\'t made for flying."',
+        '"Did I leave the oven on?"',
+        '"One more try, dearie."',
+      ];
+      ctx.fillStyle = '#b07040';
+      ctx.font = 'italic 13px Georgia';
+      ctx.fillText(quotes[Math.floor(Math.random() * quotes.length)], W / 2, H / 2 + 76);
+    }
+
+    // --- Game logic ---
+    function spawnPipe(now) {
+      const minTop = 60;
+      const maxTop = H - GROUND_H - PIPE_GAP - 60;
+      const topY = minTop + Math.random() * (maxTop - minTop);
+      pipes.push({ x: W + 10, topY, scored: false });
+      lastPipeTime = now;
+    }
+
+    function updateClouds() {
+      for (const c of clouds) {
+        c.x -= c.speed;
+        if (c.x + c.r * 2 < 0) {
+          c.x = W + c.r;
+          c.y = 40 + Math.random() * 140;
+        }
+      }
+    }
+
+    function birdHitsPipe(b, p) {
+      const margin = 6;
+      const bLeft = b.x - b.w / 2 + margin;
+      const bRight = b.x + b.w / 2 - margin;
+      const bTop = b.y - b.h / 2 + margin;
+      const bBot = b.y + b.h / 2 - margin;
+      const pLeft = p.x - 5;
+      const pRight = p.x + PIPE_W + 5;
+      const overlapX = bRight > pLeft && bLeft < pRight;
+      if (!overlapX) return false;
+      return bTop < p.topY || bBot > p.topY + PIPE_GAP;
+    }
+
+    let lastTime = 0;
+    function loop(now) {
+      const dt = now - lastTime;
+      lastTime = now;
+
+      // update clouds always
+      updateClouds();
+
+      if (state === 'playing') {
+        // bird physics
+        bird.vy += GRAVITY;
+        bird.y += bird.vy;
+        bird.rotation = Math.min(Math.max(bird.vy * 0.06, -0.5), 1.2);
+
+        // spawn pipes
+        if (now - lastPipeTime > PIPE_INTERVAL) {
+          spawnPipe(now);
+        }
+
+        // move pipes & score
+        for (const p of pipes) {
+          p.x -= PIPE_SPEED;
+          if (!p.scored && p.x + PIPE_W < bird.x) {
+            p.scored = true;
+            score++;
+          }
+        }
+        pipes = pipes.filter(p => p.x + PIPE_W + 20 > 0);
+
+        // collision: ground / ceiling
+        if (bird.y + bird.h / 2 >= H - GROUND_H || bird.y - bird.h / 2 <= 0) {
+          die();
+        }
+
+        // collision: pipes
+        for (const p of pipes) {
+          if (birdHitsPipe(bird, p)) { die(); break; }
+        }
+      }
+
+      // --- Draw ---
+      drawSky();
+      for (const c of clouds) drawCloud(c);
+      for (const p of pipes) drawPipe(p);
+      drawGround();
+      drawBird();
+
+      if (state === 'playing' || state === 'dead') drawScore();
+      if (state === 'idle') drawIdleScreen();
+      if (state === 'dead') drawDeadScreen();
+
+      animFrame = requestAnimationFrame(loop);
+    }
+
+    function die() {
+      state = 'dead';
+      if (!highScore || score > highScore) highScore = score;
+    }
+
+    function flap() {
+      if (state === 'idle') {
+        state = 'playing';
+        bird.vy = FLAP_STRENGTH;
+        return;
+      }
+      if (state === 'dead') {
+        resetGame();
+        state = 'playing';
+        bird.vy = FLAP_STRENGTH;
+        return;
+      }
+      if (state === 'playing') {
+        bird.vy = FLAP_STRENGTH;
+      }
+    }
+
+    // --- Input ---
+    document.addEventListener('keydown', e => {
+      if (e.code === 'Space' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        flap();
+      }
+    });
+    canvas.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      flap();
+    });
+
+    // --- Start ---
+    highScore = 0;
+    resetGame();
+    initClouds();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

@@ -85,17 +85,17 @@
     const W = canvas.width;
     const H = canvas.height;
     const GROUND_H  = 60;
-    const GRAVITY   = 0.38;
-    const FLAP_STR  = -7.5;
+    const GRAVITY   = 0.34;
+    const FLAP_STR  = -6.9;
     const PIPE_W    = 60;
-    const PIPE_GAP  = 148;
-    const PIPE_SPD  = 2.4;
-    const PIPE_INT  = 1700;
+    const PIPE_GAP  = 184;
+    const PIPE_SPD  = 2.1;
+    const PIPE_INT  = 1750;
 
-    let bird, pipes, clouds, score, highScore, state, lastPipeTime;
+    let bird, pipes, clouds, junk, score, highScore, state, lastPipeTime;
 
     function resetGame() {
-      bird = { x: 90, y: H / 2 - 20, vy: 0, w: 38, h: 48, rotation: 0 };
+      bird = { x: 90, y: H / 2 - 20, vy: 0, w: 34, h: 40, rotation: 0 };
       pipes = [];
       score = 0;
       lastPipeTime = 0;
@@ -112,6 +112,30 @@
           speed: 0.25 + Math.random() * 0.3,
         });
       }
+    }
+
+    // Grandma's flying treasures: paper bags, boxes, newspapers, coupons
+    const JUNK_TYPES = ['bag', 'box', 'news', 'coupon'];
+    const COUPON_TINTS = ['#ffe06b', '#ffb3c1', '#bde8c4', '#bcd6ff'];
+
+    function makeJunk(x) {
+      return {
+        type: JUNK_TYPES[Math.floor(Math.random() * JUNK_TYPES.length)],
+        x,
+        y: 40 + Math.random() * (H - GROUND_H - 80),
+        rot: Math.random() * Math.PI * 2,
+        rotSpd: (Math.random() - 0.5) * 0.05,
+        scale: 0.65 + Math.random() * 0.7,
+        speed: 0.9 + Math.random() * 0.9,
+        phase: Math.random() * Math.PI * 2,
+        wobAmp: 5 + Math.random() * 10,
+        tint: COUPON_TINTS[Math.floor(Math.random() * COUPON_TINTS.length)],
+      };
+    }
+
+    function initJunk() {
+      junk = [];
+      for (let i = 0; i < 7; i++) junk.push(makeJunk(Math.random() * W));
     }
 
     // ── Drawing helpers ─────────────────────────────────────────────────────
@@ -133,6 +157,62 @@
       d(0, 0, c.r); d(c.r * 0.7, c.r * 0.1, c.r * 0.75);
       d(-c.r * 0.65, c.r * 0.15, c.r * 0.65); d(c.r * 0.1, -c.r * 0.45, c.r * 0.55);
       ctx.globalAlpha = 1;
+    }
+
+    // ── Flying junk shapes (drawn centered at origin) ───────────────────────
+    function shapeBag() {
+      ctx.fillStyle = '#c79a5b'; ctx.strokeStyle = '#8a6634'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.rect(-9, -11, 18, 22); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#b5894c';
+      ctx.beginPath(); ctx.rect(-9, -11, 18, 5); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#a87f44'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(-3, -6); ctx.lineTo(-3, 11);
+      ctx.moveTo(3, -6); ctx.lineTo(3, 11); ctx.stroke();
+    }
+    function shapeBox() {
+      ctx.fillStyle = '#d2a86a'; ctx.strokeStyle = '#9c7338'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.rect(-11, -7, 22, 16); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#c2965a';
+      ctx.beginPath(); ctx.moveTo(-11, -7); ctx.lineTo(-15, -13); ctx.lineTo(-2, -9); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(11, -7); ctx.lineTo(15, -13); ctx.lineTo(2, -9); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#a87f44'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(0, 9); ctx.stroke();
+    }
+    function shapeNews() {
+      ctx.fillStyle = '#f5f1e6'; ctx.strokeStyle = '#b8b0a0'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.rect(-11, -13, 22, 26); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#3a3a3a'; ctx.fillRect(-9, -11, 18, 4);
+      ctx.strokeStyle = '#9a948a'; ctx.lineWidth = 0.7;
+      for (let i = 0; i < 7; i++) {
+        const y = -4 + i * 2.4;
+        ctx.beginPath(); ctx.moveTo(-9, y); ctx.lineTo(9, y); ctx.stroke();
+      }
+      ctx.strokeStyle = '#cfc8b8';
+      ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(0, 13); ctx.stroke();
+    }
+    function shapeCoupon(tint) {
+      ctx.fillStyle = tint; ctx.strokeStyle = '#d09020'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.rect(-13, -8, 26, 16); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#c8141a'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+      ctx.strokeRect(-10, -5, 20, 10); ctx.setLineDash([]);
+      ctx.fillStyle = '#c8141a'; ctx.font = 'bold 9px Georgia';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('50%', 0, 1);
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    function drawJunkItem(j) {
+      ctx.save();
+      ctx.translate(j.x, j.y + Math.sin(j.phase) * j.wobAmp);
+      ctx.rotate(j.rot);
+      ctx.scale(j.scale, j.scale);
+      ctx.globalAlpha = 0.92;
+      if (j.type === 'bag') shapeBag();
+      else if (j.type === 'box') shapeBox();
+      else if (j.type === 'news') shapeNews();
+      else shapeCoupon(j.tint);
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
 
     function drawGround() {
@@ -445,20 +525,61 @@
       ctx.restore();
     }
 
-    const BIRD_DISPLAY_H = 60;
+    const BIRD_DISPLAY_H = 58;
+
+    // A little cartoon airplane that grandma rides on (drawn centered at origin).
+    function drawLittlePlane() {
+      // back wing
+      ctx.fillStyle = '#d9c089'; ctx.strokeStyle = '#9c7b46'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(0, 22, 36, 7, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+      // fuselage
+      const grad = ctx.createLinearGradient(0, 10, 0, 32);
+      grad.addColorStop(0, '#f0dca8'); grad.addColorStop(1, '#cdb072');
+      ctx.fillStyle = grad; ctx.strokeStyle = '#9c7b46'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(0, 20, 32, 11, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+      // red racing stripe
+      ctx.fillStyle = '#cc3b3b';
+      ctx.beginPath(); ctx.ellipse(0, 20, 32, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+
+      // tail fin (rear/left)
+      ctx.fillStyle = '#d9c089'; ctx.strokeStyle = '#9c7b46';
+      ctx.beginPath(); ctx.moveTo(-28, 14); ctx.lineTo(-37, 3); ctx.lineTo(-31, 18); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+
+      // nose cone + spinning propeller (front/right)
+      ctx.fillStyle = '#888';
+      ctx.beginPath(); ctx.arc(31, 20, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(120,100,60,0.45)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(35, 20, 2.5, 10, 0, 0, Math.PI * 2); ctx.stroke();
+
+      // wheels
+      ctx.fillStyle = '#333';
+      ctx.beginPath(); ctx.arc(-6, 32, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(12, 32, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#9c7b46'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-6, 28); ctx.lineTo(-6, 32);
+      ctx.moveTo(12, 28); ctx.lineTo(12, 32); ctx.stroke();
+    }
 
     function drawBird() {
       const b = bird;
       if (state === 'dead') return; // death animation is drawn on the game-over panel
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.rotation);
+      drawLittlePlane();
       if (sprites.fly) {
-        drawSpriteFitted(sprites.fly, b.x, b.y, BIRD_DISPLAY_H, b.rotation);
+        const img = sprites.fly;
+        const aspect = img.naturalWidth / img.naturalHeight;
+        const h = BIRD_DISPLAY_H, w = h * aspect;
+        // raise grandma so she sits in the cockpit
+        ctx.drawImage(img, -w / 2, -h / 2 - 12, w, h);
       } else {
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(b.rotation);
         drawGrandmaPlane();
-        ctx.restore();
       }
+      ctx.restore();
     }
 
     // ── UI panels ───────────────────────────────────────────────────────────
@@ -552,8 +673,18 @@
       }
     }
 
+    function updateJunk() {
+      for (let i = 0; i < junk.length; i++) {
+        const j = junk[i];
+        j.x -= j.speed;
+        j.rot += j.rotSpd;
+        j.phase += 0.03;
+        if (j.x < -34) junk[i] = makeJunk(W + 20 + Math.random() * 60);
+      }
+    }
+
     function birdHitsPipe(b, p) {
-      const m = 8;
+      const m = 11;
       const bL = b.x - b.w / 2 + m, bR = b.x + b.w / 2 - m;
       const bT = b.y - b.h / 2 + m, bB = b.y + b.h / 2 - m;
       if (!(bR > p.x - 5 && bL < p.x + PIPE_W + 5)) return false;
@@ -577,6 +708,7 @@
 
     function loop(now) {
       updateClouds();
+      updateJunk();
 
       if (state === 'playing') {
         bird.vy += GRAVITY;
@@ -597,6 +729,7 @@
 
       drawSky();
       for (const c of clouds) drawCloud(c);
+      for (const j of junk) drawJunkItem(j);
       for (const p of pipes) drawPipe(p);
       drawGround();
       drawBird();
@@ -623,6 +756,7 @@
     highScore = 0;
     resetGame();
     initClouds();
+    initJunk();
     requestAnimationFrame(loop);
   </script>
 </body>

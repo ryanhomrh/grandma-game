@@ -2,91 +2,104 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Grandma Flappy Bird</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#f9e4c8" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Grandma Takes Flight</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       background: #f9e4c8;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 100vh;
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding: 8px;
       font-family: Georgia, serif;
       overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
     h1 {
       color: #a0522d;
-      font-size: 1.4rem;
+      font-size: clamp(1rem, 5vw, 1.4rem);
       margin-bottom: 8px;
       letter-spacing: 1px;
+      text-align: center;
     }
     canvas {
       border: 3px solid #c4a882;
       border-radius: 12px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.15);
       display: block;
+      touch-action: none;
+      /* Scale to fit the screen while preserving the 400:550 play area */
+      aspect-ratio: 400 / 550;
+      width: min(100vw - 16px, (100dvh - 96px) * 400 / 550);
+      height: auto;
+      max-height: calc(100dvh - 96px);
     }
     #hint {
       margin-top: 10px;
       color: #8b6045;
-      font-size: 0.85rem;
+      font-size: clamp(0.75rem, 3.5vw, 0.85rem);
+      text-align: center;
     }
   </style>
 </head>
 <body>
   <h1>🌸 Grandma Takes Flight 🌸</h1>
   <canvas id="gameCanvas" width="400" height="550"></canvas>
-  <p id="hint">Press <strong>Space</strong> or tap to flap!</p>
+  <p id="hint"><strong>Tap</strong> the screen (or press <strong>Space</strong>) to flap!</p>
 
   <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // --- Load grandma image (falls back to placeholder if not found) ---
-    const grandmaImg = new Image();
-    let useImage = false;
-    grandmaImg.onload = () => { useImage = true; };
-    grandmaImg.onerror = () => { useImage = false; };
-    grandmaImg.src = 'grandma.png';
+    // Load grandma cartoon sprites (purpose-built, safe to publish)
+    const sprites = {};
+    const SPRITE_FILES = {
+      fly:       'sprites/grandma_fly.png',
+      bruise:    'sprites/grandma_bruise.png',
+      dazed:     'sprites/grandma_dazed.png',
+      surprised: 'sprites/grandma_surprised.png',
+    };
+    for (const [key, src] of Object.entries(SPRITE_FILES)) {
+      const img = new Image();
+      img.onload = () => { sprites[key] = img; };
+      img.src = src;
+    }
 
-    // --- Color palette ---
-    const SKY      = '#fef3e2';
-    const GROUND   = '#d4a574';
-    const GROUND2  = '#c49060';
-    const PIPE_BODY = '#7daa6f';
-    const PIPE_RIM  = '#5a8a50';
-    const FLOWER_C  = '#e8a0b4';
-    const CLOUD_C   = '#ffffff';
+    // "Uh oh!" death animation: slowly tab through these frames
+    const DEATH_SEQUENCE = ['bruise', 'dazed', 'surprised'];
+    const DEATH_FRAME_MS = 600;
+    let deathTime = 0;
 
-    // --- Game constants ---
     const W = canvas.width;
     const H = canvas.height;
-    const GROUND_H = 60;
-    const GRAVITY = 0.38;
-    const FLAP_STRENGTH = -7.5;
-    const PIPE_W = 60;
-    const PIPE_GAP = 145;
-    const PIPE_SPEED = 2.4;
-    const PIPE_INTERVAL = 1700; // ms
+    const GROUND_H  = 60;
+    const GRAVITY   = 0.38;
+    const FLAP_STR  = -7.5;
+    const PIPE_W    = 60;
+    const PIPE_GAP  = 148;
+    const PIPE_SPD  = 2.4;
+    const PIPE_INT  = 1700;
 
-    // --- State ---
-    let bird, pipes, clouds, score, highScore, state, lastPipeTime, animFrame;
+    let bird, pipes, clouds, score, highScore, state, lastPipeTime;
 
     function resetGame() {
-      bird = {
-        x: 90,
-        y: H / 2 - 20,
-        vy: 0,
-        w: 52,
-        h: 52,
-        rotation: 0,
-      };
+      bird = { x: 90, y: H / 2 - 20, vy: 0, w: 38, h: 48, rotation: 0 };
       pipes = [];
       score = 0;
       lastPipeTime = 0;
-      state = 'idle'; // idle | playing | dead
+      state = 'idle';
     }
 
     function initClouds() {
@@ -101,7 +114,8 @@
       }
     }
 
-    // --- Drawing helpers ---
+    // ── Drawing helpers ─────────────────────────────────────────────────────
+
     function drawSky() {
       const grad = ctx.createLinearGradient(0, 0, 0, H - GROUND_H);
       grad.addColorStop(0, '#fce4d6');
@@ -111,26 +125,21 @@
     }
 
     function drawCloud(c) {
-      ctx.fillStyle = CLOUD_C;
       ctx.globalAlpha = 0.82;
-      const draw = (dx, dy, r) => {
-        ctx.beginPath();
-        ctx.arc(c.x + dx, c.y + dy, r, 0, Math.PI * 2);
-        ctx.fill();
+      ctx.fillStyle = '#fff';
+      const d = (dx, dy, r) => {
+        ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy, r, 0, Math.PI * 2); ctx.fill();
       };
-      draw(0, 0, c.r);
-      draw(c.r * 0.7, c.r * 0.1, c.r * 0.75);
-      draw(-c.r * 0.65, c.r * 0.15, c.r * 0.65);
-      draw(c.r * 0.1, -c.r * 0.45, c.r * 0.55);
+      d(0, 0, c.r); d(c.r * 0.7, c.r * 0.1, c.r * 0.75);
+      d(-c.r * 0.65, c.r * 0.15, c.r * 0.65); d(c.r * 0.1, -c.r * 0.45, c.r * 0.55);
       ctx.globalAlpha = 1;
     }
 
     function drawGround() {
-      ctx.fillStyle = GROUND;
+      ctx.fillStyle = '#d4a574';
       ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
-      ctx.fillStyle = GROUND2;
+      ctx.fillStyle = '#c49060';
       ctx.fillRect(0, H - GROUND_H, W, 6);
-      // grass tufts
       ctx.fillStyle = '#9bc77a';
       for (let x = 0; x < W; x += 18) {
         ctx.beginPath();
@@ -142,19 +151,16 @@
     }
 
     function drawFlower(cx, cy) {
-      const petalR = 7;
-      const petalColors = ['#f4a7c0', '#f9c8da', '#e8a0b4', '#f7b3c8'];
+      const petal = ['#f4a7c0', '#f9c8da', '#e8a0b4', '#f7b3c8'];
       for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2;
-        ctx.fillStyle = petalColors[i % petalColors.length];
+        const a = (i / 5) * Math.PI * 2;
+        ctx.fillStyle = petal[i % petal.length];
         ctx.beginPath();
-        ctx.arc(cx + Math.cos(angle) * petalR, cy + Math.sin(angle) * petalR, petalR - 1, 0, Math.PI * 2);
+        ctx.arc(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7, 6, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.fillStyle = '#f7e26b';
-      ctx.beginPath();
-      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI * 2); ctx.fill();
     }
 
     function drawPipe(pipe) {
@@ -162,118 +168,304 @@
       const botY = pipe.topY + PIPE_GAP;
       const botH = H - GROUND_H - botY;
 
-      const drawRect = (x, y, w, h) => {
-        // body
+      const drawRect = (x, y, w, h, isTop) => {
         const grad = ctx.createLinearGradient(x, 0, x + w, 0);
         grad.addColorStop(0, '#5a8a50');
-        grad.addColorStop(0.3, PIPE_BODY);
+        grad.addColorStop(0.3, '#7daa6f');
         grad.addColorStop(1, '#4a7542');
         ctx.fillStyle = grad;
         ctx.fillRect(x, y, w, h);
 
-        // rim cap
-        ctx.fillStyle = PIPE_RIM;
-        const rimH = 14, rimW = w + 10;
-        const rimX = x - 5;
-        if (y === 0) {
-          // top pipe — rim at bottom
+        ctx.fillStyle = '#5a8a50';
+        const rimW = w + 10, rimH = 14, rimX = x - 5;
+        if (isTop) {
           ctx.fillRect(rimX, y + h - rimH, rimW, rimH);
-          ctx.strokeStyle = '#3d6b35';
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = '#3d6b35'; ctx.lineWidth = 1.5;
           ctx.strokeRect(rimX, y + h - rimH, rimW, rimH);
           drawFlower(x + w / 2, y + h - rimH - 8);
         } else {
-          // bottom pipe — rim at top
           ctx.fillRect(rimX, y, rimW, rimH);
-          ctx.strokeStyle = '#3d6b35';
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = '#3d6b35'; ctx.lineWidth = 1.5;
           ctx.strokeRect(rimX, y, rimW, rimH);
           drawFlower(x + w / 2, y + rimH + 8);
         }
       };
 
-      drawRect(pipe.x, 0, PIPE_W, topH);
-      drawRect(pipe.x, botY, PIPE_W, botH);
+      drawRect(pipe.x, 0, PIPE_W, topH, true);
+      drawRect(pipe.x, botY, PIPE_W, botH, false);
     }
 
-    function drawPlaceholderBird(b) {
-      const cx = b.x, cy = b.y;
+    // ── Grandma-on-plane cartoon sprite ────────────────────────────────────
+    // Based on the photo: beige plane w/ red stripe, propeller, landing gear,
+    // Asian grandma in gray vest gripping a large U-yoke.
+
+    function drawGrandmaPlane() {
+      const s = 1;
+
+      // --- Main wing (behind body) ---
+      ctx.fillStyle = '#dfc98a';
+      ctx.beginPath();
+      ctx.moveTo(-14*s, -4*s);
+      ctx.lineTo( 18*s, -4*s);
+      ctx.lineTo( 34*s, -20*s);
+      ctx.lineTo(-36*s, -20*s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#8b7355'; ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // Wing detail line
+      ctx.strokeStyle = '#c4a87a'; ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-30*s, -17*s); ctx.lineTo(28*s, -17*s); ctx.stroke();
+
+      // --- Fuselage ---
+      const fuseGrad = ctx.createLinearGradient(-34*s, 0, 34*s, 0);
+      fuseGrad.addColorStop(0,   '#c8b07a');
+      fuseGrad.addColorStop(0.3, '#e8d5a3');
+      fuseGrad.addColorStop(0.7, '#e8d5a3');
+      fuseGrad.addColorStop(1,   '#b8a06a');
+      ctx.fillStyle = fuseGrad;
+      ctx.beginPath();
+      ctx.ellipse(0, 8*s, 35*s, 12*s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#8b7355'; ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Red stripe on fuselage
+      ctx.fillStyle = '#cc2222';
+      ctx.beginPath();
+      ctx.ellipse(0, 8*s, 35*s, 4*s, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // --- Tail fin (vertical, left side) ---
+      ctx.fillStyle = '#dfc98a';
+      ctx.beginPath();
+      ctx.moveTo(-22*s,  2*s);
+      ctx.lineTo(-36*s, -16*s);
+      ctx.lineTo(-36*s,  5*s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#8b7355'; ctx.lineWidth = 1.2; ctx.stroke();
+
+      // Horizontal stabilizer (small tail wing)
+      ctx.fillStyle = '#dfc98a';
+      ctx.beginPath();
+      ctx.moveTo(-24*s, 8*s);
+      ctx.lineTo(-36*s, 8*s);
+      ctx.lineTo(-36*s, 3*s);
+      ctx.lineTo(-22*s, 4*s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#8b7355'; ctx.lineWidth = 1; ctx.stroke();
+
+      // --- Engine cowling (front) ---
+      ctx.fillStyle = '#555';
+      ctx.beginPath();
+      ctx.arc(32*s, 8*s, 10*s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#777';
+      ctx.beginPath();
+      ctx.arc(32*s, 8*s, 7*s, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Propeller hub
+      ctx.fillStyle = '#ccc';
+      ctx.beginPath();
+      ctx.arc(40*s, 8*s, 4*s, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Propeller blades (spinning — two blades)
+      ctx.fillStyle = '#6a5a3a';
+      ctx.beginPath();
+      ctx.ellipse(40*s, 8*s, 3*s, 16*s, 0.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(40*s, 8*s, 16*s, 3*s, 0.15, 0, Math.PI * 2);
+      ctx.fill();
+      // Blur ring for spinning effect
+      ctx.strokeStyle = 'rgba(180,160,100,0.25)';
+      ctx.lineWidth = 4*s;
+      ctx.beginPath();
+      ctx.arc(40*s, 8*s, 14*s, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // --- Landing gear ---
+      ctx.strokeStyle = '#555'; ctx.lineWidth = 2.2*s; ctx.lineCap = 'round';
+      // Left strut
+      ctx.beginPath();
+      ctx.moveTo(-5*s, 17*s); ctx.lineTo(-8*s, 28*s); ctx.stroke();
+      // Right strut
+      ctx.beginPath();
+      ctx.moveTo( 8*s, 17*s); ctx.lineTo(10*s, 28*s); ctx.stroke();
+      // Cross brace
+      ctx.lineWidth = 1.5*s;
+      ctx.beginPath();
+      ctx.moveTo(-8*s, 28*s); ctx.lineTo(10*s, 28*s); ctx.stroke();
+
+      // Wheels
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(1*s, 30*s, 5*s, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#555';
+      ctx.beginPath(); ctx.arc(1*s, 30*s, 2.5*s, 0, Math.PI * 2); ctx.fill();
+
+      // Wheel spokes
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI;
+        ctx.beginPath();
+        ctx.moveTo(1*s + Math.cos(a) * 4.5*s, 30*s + Math.sin(a) * 4.5*s);
+        ctx.lineTo(1*s - Math.cos(a) * 4.5*s, 30*s - Math.sin(a) * 4.5*s);
+        ctx.stroke();
+      }
+
+      // --- Grandma ---
+
+      // Torso / gray vest
+      ctx.fillStyle = '#808080';
+      ctx.beginPath();
+      ctx.ellipse(3*s, -10*s, 12*s, 15*s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#606060'; ctx.lineWidth = 1; ctx.stroke();
+
+      // Shirt collar (light blue-gray peeking out)
+      ctx.fillStyle = '#c0cdd8';
+      ctx.beginPath();
+      ctx.ellipse(3*s, -11*s, 5*s, 7*s, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Neck
+      ctx.fillStyle = '#f0c090';
+      ctx.beginPath();
+      ctx.ellipse(3*s, -23*s, 4*s, 5*s, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Head
+      ctx.fillStyle = '#f0c090';
+      ctx.beginPath();
+      ctx.arc(3*s, -33*s, 11*s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#c49060'; ctx.lineWidth = 1; ctx.stroke();
+
+      // Hair — short, soft gray
+      ctx.fillStyle = '#d8d4d0';
+      ctx.beginPath();
+      ctx.arc(3*s, -39*s, 9.5*s, Math.PI, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-6*s, -33*s, 5*s, Math.PI * 0.5, Math.PI * 1.5);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(12*s, -33*s, 5*s, -Math.PI * 0.5, Math.PI * 0.5);
+      ctx.fill();
+      // Hair texture lines
+      ctx.strokeStyle = '#bbb8b5'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(-3*s, -42*s); ctx.lineTo(-1*s, -38*s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo( 3*s, -43*s); ctx.lineTo( 3*s, -38*s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo( 9*s, -42*s); ctx.lineTo( 7*s, -38*s); ctx.stroke();
+
+      // Eyes (soft almond shape)
+      ctx.fillStyle = '#2a2a2a';
+      ctx.beginPath(); ctx.ellipse(-2*s, -34*s, 2.8*s, 1.8*s, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( 8*s, -34*s, 2.8*s, 1.8*s,  0.15, 0, Math.PI * 2); ctx.fill();
+      // Eye shine
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-1*s, -34.5*s, 0.9*s, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc( 9*s, -34.5*s, 0.9*s, 0, Math.PI * 2); ctx.fill();
+
+      // Eyebrows
+      ctx.strokeStyle = '#7a6a5a'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(-5*s, -37.5*s); ctx.lineTo( 1*s, -36.5*s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo( 6*s, -36.5*s); ctx.lineTo(12*s, -37.5*s); ctx.stroke();
+
+      // Nose
+      ctx.strokeStyle = '#c49060'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(3*s, -31*s, 2.5*s, 0.2, Math.PI - 0.2); ctx.stroke();
+
+      // Smile
+      ctx.strokeStyle = '#c49060'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(3*s, -30*s, 4.5*s, 0.15, Math.PI - 0.15); ctx.stroke();
+
+      // Rosy cheeks
+      ctx.fillStyle = 'rgba(230,120,120,0.32)';
+      ctx.beginPath(); ctx.ellipse(-3*s, -30*s, 4.5*s, 2.5*s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( 9*s, -30*s, 4.5*s, 2.5*s, 0, 0, Math.PI * 2); ctx.fill();
+
+      // Left arm reaching to yoke
+      ctx.strokeStyle = '#f0c090'; ctx.lineWidth = 4.5*s; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-4*s, -16*s);
+      ctx.quadraticCurveTo(5*s, -12*s, 14*s, -8*s);
+      ctx.stroke();
+
+      // Right arm reaching to yoke
+      ctx.beginPath();
+      ctx.moveTo(10*s, -16*s);
+      ctx.quadraticCurveTo(15*s, -12*s, 20*s, -8*s);
+      ctx.stroke();
+
+      // Hands
+      ctx.fillStyle = '#f0c090';
+      ctx.beginPath(); ctx.arc(14*s, -8*s, 3.5*s, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(20*s, -8*s, 3.5*s, 0, Math.PI * 2); ctx.fill();
+
+      // Steering yoke — U shape
+      ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 3.5*s; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(14*s, -8*s);
+      ctx.lineTo(14*s, -16*s);
+      ctx.arc(20*s, -16*s, 6*s, Math.PI, 0);
+      ctx.lineTo(26*s, -8*s);
+      ctx.stroke();
+
+      // Yoke post down to instrument panel
+      ctx.lineWidth = 3*s;
+      ctx.beginPath();
+      ctx.moveTo(20*s, -10*s); ctx.lineTo(20*s, 0*s); ctx.stroke();
+
+      // Motion lines (trailing behind)
+      ctx.strokeStyle = 'rgba(160,140,120,0.45)';
+      ctx.lineWidth = 1.8; ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(-42*s,  1*s); ctx.lineTo(-58*s,  0*s); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-41*s,  8*s); ctx.lineTo(-56*s,  9*s); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-40*s, 15*s); ctx.lineTo(-52*s, 16*s); ctx.stroke();
+    }
+
+    // Draw an image centered at (cx,cy), scaled to displayH preserving aspect.
+    function drawSpriteFitted(img, cx, cy, displayH, rot) {
+      const aspect = img.naturalWidth / img.naturalHeight;
+      const h = displayH, w = displayH * aspect;
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.rotate(b.rotation);
-
-      // body
-      ctx.fillStyle = '#f9d0b4';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 22, 20, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#c4956a';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // hair bun
-      ctx.fillStyle = '#888';
-      ctx.beginPath();
-      ctx.arc(0, -18, 10, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#aaa';
-      ctx.beginPath();
-      ctx.arc(-5, -22, 6, 0, Math.PI * 2);
-      ctx.fill();
-
-      // eyes
-      ctx.fillStyle = '#333';
-      ctx.beginPath(); ctx.arc(-7, -4, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(7, -4, 3, 0, Math.PI * 2); ctx.fill();
-
-      // rosy cheeks
-      ctx.fillStyle = 'rgba(240,150,150,0.5)';
-      ctx.beginPath(); ctx.ellipse(-12, 3, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(12, 3, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
-
-      // smile
-      ctx.strokeStyle = '#c4956a';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(0, 4, 8, 0.1, Math.PI - 0.1);
-      ctx.stroke();
-
-      // glasses
-      ctx.strokeStyle = '#666';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(-7, -4, 5, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(7, -4, 5, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-2, -4); ctx.lineTo(2, -4); ctx.stroke();
-
-      // wings (little arms)
-      ctx.fillStyle = '#f9d0b4';
-      ctx.beginPath();
-      ctx.ellipse(-26, 4, 10, 6, -0.3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#c4956a';
-      ctx.stroke();
-
+      if (rot) ctx.rotate(rot);
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
       ctx.restore();
     }
 
+    const BIRD_DISPLAY_H = 60;
+
     function drawBird() {
       const b = bird;
-      if (useImage) {
+      if (state === 'dead') return; // death animation is drawn on the game-over panel
+      if (sprites.fly) {
+        drawSpriteFitted(sprites.fly, b.x, b.y, BIRD_DISPLAY_H, b.rotation);
+      } else {
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.rotate(b.rotation);
-        ctx.drawImage(grandmaImg, -b.w / 2, -b.h / 2, b.w, b.h);
+        drawGrandmaPlane();
         ctx.restore();
-      } else {
-        drawPlaceholderBird(b);
       }
     }
 
+    // ── UI panels ───────────────────────────────────────────────────────────
+
     function drawScore() {
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.beginPath();
-      ctx.roundRect(W / 2 - 45, 12, 90, 38, 10);
-      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.72)';
+      ctx.beginPath(); ctx.roundRect(W / 2 - 45, 12, 90, 38, 10); ctx.fill();
       ctx.fillStyle = '#7a4f2e';
       ctx.font = 'bold 26px Georgia';
       ctx.textAlign = 'center';
@@ -281,193 +473,153 @@
     }
 
     function drawIdleScreen() {
-      ctx.fillStyle = 'rgba(255,245,235,0.88)';
-      ctx.beginPath();
-      ctx.roundRect(W / 2 - 140, H / 2 - 80, 280, 160, 16);
-      ctx.fill();
-      ctx.strokeStyle = '#c4a882';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,245,235,0.90)';
+      ctx.beginPath(); ctx.roundRect(W / 2 - 140, H / 2 - 80, 280, 160, 16); ctx.fill();
+      ctx.strokeStyle = '#c4a882'; ctx.lineWidth = 2; ctx.stroke();
 
       ctx.fillStyle = '#a0522d';
-      ctx.font = 'bold 22px Georgia';
-      ctx.textAlign = 'center';
+      ctx.font = 'bold 22px Georgia'; ctx.textAlign = 'center';
       ctx.fillText('🌸 Grandma Takes Flight', W / 2, H / 2 - 40);
 
-      ctx.fillStyle = '#7a4f2e';
-      ctx.font = '16px Georgia';
+      ctx.fillStyle = '#7a4f2e'; ctx.font = '16px Georgia';
       ctx.fillText('Press Space or tap to start', W / 2, H / 2);
       ctx.fillText('Keep Grandma in the air!', W / 2, H / 2 + 28);
 
       if (highScore) {
-        ctx.fillStyle = '#c47a3d';
-        ctx.font = '14px Georgia';
+        ctx.fillStyle = '#c47a3d'; ctx.font = '14px Georgia';
         ctx.fillText(`Best: ${highScore}`, W / 2, H / 2 + 56);
       }
     }
 
+    const QUOTES = [
+      '"Off to Wendy\'s I go!"',
+      '"No, you can\'t throw that away."',
+      '"Be careful!"',
+      '"Did you eat yet?"',
+      '"I\'m not driving too fast, you are."',
+      '"Hold on, let me find my glasses."',
+      '"One more try, dearie."',
+    ];
+
     function drawDeadScreen() {
-      ctx.fillStyle = 'rgba(255,245,235,0.92)';
-      ctx.beginPath();
-      ctx.roundRect(W / 2 - 140, H / 2 - 100, 280, 200, 16);
-      ctx.fill();
-      ctx.strokeStyle = '#c4a882';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      const panelTop = H / 2 - 170, panelH = 320;
+      ctx.fillStyle = 'rgba(255,245,235,0.94)';
+      ctx.beginPath(); ctx.roundRect(W / 2 - 140, panelTop, 280, panelH, 16); ctx.fill();
+      ctx.strokeStyle = '#c4a882'; ctx.lineWidth = 2; ctx.stroke();
 
-      ctx.fillStyle = '#a0522d';
-      ctx.font = 'bold 24px Georgia';
-      ctx.textAlign = 'center';
-      ctx.fillText('Oh dear! 😅', W / 2, H / 2 - 58);
+      // Slowly tab through the "uh oh" death frames as the centerpiece
+      const seqReady = DEATH_SEQUENCE.every(k => sprites[k]);
+      if (seqReady) {
+        const idx = Math.floor((performance.now() - deathTime) / DEATH_FRAME_MS) % DEATH_SEQUENCE.length;
+        drawSpriteFitted(sprites[DEATH_SEQUENCE[idx]], W / 2, panelTop + 78, 120, 0);
+      }
 
-      ctx.fillStyle = '#7a4f2e';
-      ctx.font = '18px Georgia';
-      ctx.fillText(`Score: ${score}`, W / 2, H / 2 - 22);
+      ctx.fillStyle = '#a0522d'; ctx.font = 'bold 24px Georgia'; ctx.textAlign = 'center';
+      ctx.fillText('Oh dear! 😅', W / 2, panelTop + 168);
+
+      ctx.fillStyle = '#7a4f2e'; ctx.font = '18px Georgia';
+      ctx.fillText(`Score: ${score}`, W / 2, panelTop + 200);
 
       if (highScore) {
         ctx.fillStyle = score >= highScore ? '#d4870a' : '#8b6045';
         ctx.font = '15px Georgia';
-        ctx.fillText(score >= highScore ? `New Best: ${highScore}! 🎉` : `Best: ${highScore}`, W / 2, H / 2 + 10);
+        ctx.fillText(
+          score >= highScore ? `New Best: ${highScore}! 🎉` : `Best: ${highScore}`,
+          W / 2, panelTop + 226
+        );
       }
 
-      ctx.fillStyle = '#a0522d';
-      ctx.font = '15px Georgia';
-      ctx.fillText('Press Space or tap to try again', W / 2, H / 2 + 48);
+      ctx.fillStyle = '#a0522d'; ctx.font = '15px Georgia';
+      ctx.fillText('Press Space or tap to try again', W / 2, panelTop + 264);
 
-      // sassy grandma quote
-      const quotes = [
-        '"Back in my day, birds walked."',
-        '"I need my reading glasses."',
-        '"These hips weren\'t made for flying."',
-        '"Did I leave the oven on?"',
-        '"One more try, dearie."',
-      ];
-      ctx.fillStyle = '#b07040';
-      ctx.font = 'italic 13px Georgia';
-      ctx.fillText(quotes[Math.floor(Math.random() * quotes.length)], W / 2, H / 2 + 76);
+      ctx.fillStyle = '#b07040'; ctx.font = 'italic 13px Georgia';
+      ctx.fillText(currentQuote, W / 2, panelTop + 292);
     }
 
-    // --- Game logic ---
+    // ── Game logic ──────────────────────────────────────────────────────────
+
     function spawnPipe(now) {
       const minTop = 60;
       const maxTop = H - GROUND_H - PIPE_GAP - 60;
-      const topY = minTop + Math.random() * (maxTop - minTop);
-      pipes.push({ x: W + 10, topY, scored: false });
+      pipes.push({ x: W + 10, topY: minTop + Math.random() * (maxTop - minTop), scored: false });
       lastPipeTime = now;
     }
 
     function updateClouds() {
       for (const c of clouds) {
         c.x -= c.speed;
-        if (c.x + c.r * 2 < 0) {
-          c.x = W + c.r;
-          c.y = 40 + Math.random() * 140;
-        }
+        if (c.x + c.r * 2 < 0) { c.x = W + c.r; c.y = 40 + Math.random() * 140; }
       }
     }
 
     function birdHitsPipe(b, p) {
-      const margin = 6;
-      const bLeft = b.x - b.w / 2 + margin;
-      const bRight = b.x + b.w / 2 - margin;
-      const bTop = b.y - b.h / 2 + margin;
-      const bBot = b.y + b.h / 2 - margin;
-      const pLeft = p.x - 5;
-      const pRight = p.x + PIPE_W + 5;
-      const overlapX = bRight > pLeft && bLeft < pRight;
-      if (!overlapX) return false;
-      return bTop < p.topY || bBot > p.topY + PIPE_GAP;
+      const m = 8;
+      const bL = b.x - b.w / 2 + m, bR = b.x + b.w / 2 - m;
+      const bT = b.y - b.h / 2 + m, bB = b.y + b.h / 2 - m;
+      if (!(bR > p.x - 5 && bL < p.x + PIPE_W + 5)) return false;
+      return bT < p.topY || bB > p.topY + PIPE_GAP;
     }
 
-    let lastTime = 0;
-    function loop(now) {
-      const dt = now - lastTime;
-      lastTime = now;
+    let currentQuote = QUOTES[0];
 
-      // update clouds always
+    function die() {
+      state = 'dead';
+      deathTime = performance.now();
+      if (!highScore || score > highScore) highScore = score;
+      currentQuote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+    }
+
+    function flap() {
+      if (state === 'idle') { state = 'playing'; bird.vy = FLAP_STR; return; }
+      if (state === 'dead') { resetGame(); state = 'playing'; bird.vy = FLAP_STR; return; }
+      if (state === 'playing') bird.vy = FLAP_STR;
+    }
+
+    function loop(now) {
       updateClouds();
 
       if (state === 'playing') {
-        // bird physics
         bird.vy += GRAVITY;
-        bird.y += bird.vy;
-        bird.rotation = Math.min(Math.max(bird.vy * 0.06, -0.5), 1.2);
+        bird.y  += bird.vy;
+        bird.rotation = Math.min(Math.max(bird.vy * 0.06, -0.45), 1.1);
 
-        // spawn pipes
-        if (now - lastPipeTime > PIPE_INTERVAL) {
-          spawnPipe(now);
-        }
+        if (now - lastPipeTime > PIPE_INT) spawnPipe(now);
 
-        // move pipes & score
         for (const p of pipes) {
-          p.x -= PIPE_SPEED;
-          if (!p.scored && p.x + PIPE_W < bird.x) {
-            p.scored = true;
-            score++;
-          }
+          p.x -= PIPE_SPD;
+          if (!p.scored && p.x + PIPE_W < bird.x) { p.scored = true; score++; }
         }
         pipes = pipes.filter(p => p.x + PIPE_W + 20 > 0);
 
-        // collision: ground / ceiling
-        if (bird.y + bird.h / 2 >= H - GROUND_H || bird.y - bird.h / 2 <= 0) {
-          die();
-        }
-
-        // collision: pipes
-        for (const p of pipes) {
-          if (birdHitsPipe(bird, p)) { die(); break; }
-        }
+        if (bird.y + bird.h / 2 >= H - GROUND_H || bird.y - bird.h / 2 <= 0) die();
+        for (const p of pipes) { if (birdHitsPipe(bird, p)) { die(); break; } }
       }
 
-      // --- Draw ---
       drawSky();
       for (const c of clouds) drawCloud(c);
       for (const p of pipes) drawPipe(p);
       drawGround();
       drawBird();
 
-      if (state === 'playing' || state === 'dead') drawScore();
+      if (state !== 'idle') drawScore();
       if (state === 'idle') drawIdleScreen();
       if (state === 'dead') drawDeadScreen();
 
-      animFrame = requestAnimationFrame(loop);
+      requestAnimationFrame(loop);
     }
 
-    function die() {
-      state = 'dead';
-      if (!highScore || score > highScore) highScore = score;
-    }
-
-    function flap() {
-      if (state === 'idle') {
-        state = 'playing';
-        bird.vy = FLAP_STRENGTH;
-        return;
-      }
-      if (state === 'dead') {
-        resetGame();
-        state = 'playing';
-        bird.vy = FLAP_STRENGTH;
-        return;
-      }
-      if (state === 'playing') {
-        bird.vy = FLAP_STRENGTH;
-      }
-    }
-
-    // --- Input ---
+    // ── Input ────────────────────────────────────────────────────────────────
     document.addEventListener('keydown', e => {
-      if (e.code === 'Space' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        flap();
-      }
+      if (e.code === 'Space' || e.key === 'ArrowUp') { e.preventDefault(); flap(); }
     });
-    canvas.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      flap();
-    });
+    // Tap/click anywhere on the page to flap (mobile-friendly)
+    window.addEventListener('pointerdown', e => { e.preventDefault(); flap(); }, { passive: false });
+    // Block double-tap-to-zoom and long-press menus on touch devices
+    document.addEventListener('touchstart', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+    document.addEventListener('gesturestart', e => e.preventDefault());
+    document.addEventListener('contextmenu', e => e.preventDefault());
 
-    // --- Start ---
+    // ── Init ─────────────────────────────────────────────────────────────────
     highScore = 0;
     resetGame();
     initClouds();
